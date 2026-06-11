@@ -1,0 +1,6 @@
+.DS_Store
+.cache/
+.tmp-fixture/
+.tmp-home/
+.tmp-home2/
+slash-key
