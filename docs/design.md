@@ -36,10 +36,11 @@
 
 ## 2. Goals
 
-- `slash-key path <query>` と `GET /path?query=...` が低レイテンシで応答できる
+- `slash-key path <query>` と `GET /path?q=...` が低レイテンシで応答できる
 - daemon 起動中に `add` / `delete` / `add --codex` を実行した場合、検索結果へ即時反映される
 - 失敗理由が CLI と API の両方で明確に分かる
-- 初期実装は単純さを優先し、後から fuzzy search や incremental indexing を足せる構成にする- `add --codex` は優先順位を下げ、コア機能の後で実装できる構成にする
+- 初期実装は単純さを優先し、後から fuzzy search や incremental indexing を足せる構成にする
+- `add --codex` は優先順位を下げ、コア機能の後で実装できる構成にする
 
 ## 3. Architecture
 
@@ -181,7 +182,7 @@ DaemonState
 
 ### コマンド一覧
 
-- `slash-key start`
+- `slash-key start` / `slash-key start -e`
 - `slash-key stop`
 - `slash-key status`
 - `slash-key list`
@@ -204,6 +205,9 @@ DaemonState
 - 全 project index をメモリへロードする
 - port `4821` に bind する
 - PID 情報を `daemon.json` に保存する
+- `start` は `127.0.0.1:4821`
+- `start -e` は `0.0.0.0:4821`
+- `SLASH_KEY_LISTEN_ADDR` が指定されていればそれを優先する
 
 #### `stop`
 
@@ -413,7 +417,7 @@ response:
 
 query params:
 
-- `query`: optional
+- `q`: optional
 
 response:
 

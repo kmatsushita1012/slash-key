@@ -23,12 +23,13 @@ import (
 )
 
 const (
-	serverPort      = 4821
-	serverAddr      = "127.0.0.1:4821"
-	dataVersion     = 1
-	defaultFileMode = 0o644
-	defaultDirMode  = 0o755
-	dataDirEnvKey   = "SLASH_KEY_DATA_DIR"
+	serverPort        = 4821
+	defaultListenAddr = "127.0.0.1:4821"
+	dataVersion       = 1
+	defaultFileMode   = 0o644
+	defaultDirMode    = 0o755
+	dataDirEnvKey     = "SLASH_KEY_DATA_DIR"
+	listenAddrEnvKey  = "SLASH_KEY_LISTEN_ADDR"
 )
 
 var (
@@ -106,7 +107,7 @@ func run(args []string) int {
 
 	switch args[0] {
 	case "start":
-		if err := cmdStart(paths); err != nil {
+		if err := cmdStart(paths, args[1:]); err != nil {
 			return classifyError(err)
 		}
 		return 0
@@ -168,7 +169,7 @@ func printError(err error, exitCode int) int {
 
 func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "usage:")
-	fmt.Fprintln(w, "  slash-key start")
+	fmt.Fprintln(w, "  slash-key start [-e]")
 	fmt.Fprintln(w, "  slash-key stop")
 	fmt.Fprintln(w, "  slash-key status")
 	fmt.Fprintln(w, "  slash-key list")
@@ -450,7 +451,20 @@ func cmdStatus(paths appPaths, w io.Writer) error {
 	return nil
 }
 
-func cmdStart(paths appPaths) error {
+func cmdStart(paths appPaths, args []string) error {
+	external := false
+	if len(args) > 1 {
+		return fmt.Errorf("%w: slash-key start [-e]", errUsage)
+	}
+	if len(args) == 1 {
+		switch args[0] {
+		case "-e":
+			external = true
+		default:
+			return fmt.Errorf("%w: slash-key start [-e]", errUsage)
+		}
+	}
+
 	if err := ensureDataDirs(paths); err != nil {
 		return err
 	}
@@ -476,6 +490,9 @@ func cmdStart(paths appPaths) error {
 	cmd.Stdin = nil
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Env = append(os.Environ(), dataDirEnvKey+"="+paths.dataDir)
+	if external {
+		cmd.Env = append(cmd.Env, listenAddrEnvKey+"=0.0.0.0:4821")
+	}
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("%w: start daemon: %v", errRuntime, err)
 	}
@@ -538,9 +555,13 @@ func cmdServe(paths appPaths) error {
 	}
 	runtime := &daemonRuntime{registry: registry.Projects, indexes: indexes}
 
-	ln, err := net.Listen("tcp", serverAddr)
+	listenAddr := os.Getenv(listenAddrEnvKey)
+	if listenAddr == "" {
+		listenAddr = defaultListenAddr
+	}
+	ln, err := net.Listen("tcp", listenAddr)
 	if err != nil {
-		return fmt.Errorf("%w: bind %s: %v", errRuntime, serverAddr, err)
+		return fmt.Errorf("%w: bind %s: %v", errRuntime, listenAddr, err)
 	}
 	defer ln.Close()
 
@@ -595,7 +616,10 @@ func cmdServe(paths appPaths) error {
 		writeJSONResponse(w, http.StatusOK, paths)
 	})
 	mux.HandleFunc("/path", func(w http.ResponseWriter, r *http.Request) {
-		query := r.URL.Query().Get("query")
+		query := r.URL.Query().Get("q")
+		if query == "" {
+			query = r.URL.Query().Get("query")
+		}
 		results := searchIndexes(runtime.indexes, query)
 		writeJSONResponse(w, http.StatusOK, results)
 	})
@@ -691,7 +715,7 @@ func daemonSearch(state daemonState, query string) ([]string, error) {
 	client := &http.Client{Timeout: 2 * time.Second}
 	endpoint := fmt.Sprintf("http://127.0.0.1:%d/path", state.Port)
 	if query != "" {
-		endpoint += "?query=" + url.QueryEscape(query)
+		endpoint += "?q=" + url.QueryEscape(query)
 	}
 	resp, err := client.Get(endpoint)
 	if err != nil {
