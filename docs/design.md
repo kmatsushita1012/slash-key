@@ -182,7 +182,7 @@ DaemonState
 
 ### コマンド一覧
 
-- `slash-key start` / `slash-key start -e`
+- `slash-key start` / `slash-key start -e [ipAddr]`
 - `slash-key stop`
 - `slash-key status`
 - `slash-key list`
@@ -206,8 +206,10 @@ DaemonState
 - port `4821` に bind する
 - PID 情報を `daemon.json` に保存する
 - `start` は `127.0.0.1:4821`
-- `start -e` は `0.0.0.0:4821`
+- `start -e` は VPN interface 上の安全なアドレスを自動検出して bind する
+- `start -e <ipAddr>` は指定 IP へ bind する
 - `SLASH_KEY_LISTEN_ADDR` が指定されていればそれを優先する
+- `0.0.0.0` / `::` と LAN IP (`192.168.x.x`, `10.x.x.x`, `172.16-31.x.x`) は拒否する
 
 #### `stop`
 

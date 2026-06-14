@@ -88,9 +88,13 @@ daemon を起動する。
 - `slash-key start`
   - `127.0.0.1:4821` で待受する
 - `slash-key start -e`
-  - `0.0.0.0:4821` で待受する
+  - VPN interface 上の安全なアドレスを自動検出して `4821` で待受する
+- `slash-key start -e <ipAddr>`
+  - 指定した IP を `4821` で待受する
+  - ただし loopback または VPN interface 上の実アドレスのみ許可する
 - `SLASH_KEY_LISTEN_ADDR`
   - 指定されている場合は bind address として使用できる
+  - ただし loopback または VPN interface 上の実アドレスのみ許可する
 - `SLASH_KEY_DATA_DIR`
   - 指定されている場合は data directory として使用できる
 
@@ -103,7 +107,8 @@ http://localhost:4821
 
 #### 注意
 
-- `-e` は外部公開を許可する起動オプションである
+- `-e` は VPN 上の安全アドレスに限定して公開する起動オプションである
+- `0.0.0.0` / `::` と LAN IP (`192.168.x.x`, `10.x.x.x`, `172.16-31.x.x`) への bind は拒否する
 - 外部からアクセスする場合は host firewall と VPN policy の許可が必要である
 
 ### 6.2 `slash-key stop`
@@ -379,7 +384,9 @@ stopped -> starting -> running -> reloading -> running -> stopping -> stopped
 ## 12. セキュリティ・安全性
 
 - 既定では localhost のみで bind する
-- 外部公開は `start -e` または `SLASH_KEY_LISTEN_ADDR` の明示時のみ行う
+- `start -e` は VPN interface 上の安全アドレスのみ自動選択して公開する
+- `start -e <ipAddr>` と `SLASH_KEY_LISTEN_ADDR` は loopback または VPN interface 上の実アドレスのみ許可する
+- `0.0.0.0` / `::` と LAN IP (`192.168.x.x`, `10.x.x.x`, `172.16-31.x.x`) への bind は常に拒否する
 - `/path` は relative path のみ返す
 - path traversal を受けても filesystem を直接公開しない
 

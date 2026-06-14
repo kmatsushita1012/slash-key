@@ -32,6 +32,10 @@ const (
 	listenAddrEnvKey  = "SLASH_KEY_LISTEN_ADDR"
 )
 
+var vpnInterfacePrefixes = []string{"utun", "tun", "tap", "ppp", "wg"}
+
+var vpnInterfaceAddrs = listVPNInterfaceAddrs
+
 var (
 	errUsage               = errors.New("usage error")
 	errRuntime             = errors.New("runtime error")
@@ -70,6 +74,7 @@ type indexFile struct {
 type daemonState struct {
 	PID         int       `json:"pid"`
 	Port        int       `json:"port"`
+	ListenAddr  string    `json:"listenAddr"`
 	Status      string    `json:"status"`
 	StartedAt   time.Time `json:"startedAt"`
 	DataVersion int       `json:"dataVersion"`
@@ -169,7 +174,7 @@ func printError(err error, exitCode int) int {
 
 func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "usage:")
-	fmt.Fprintln(w, "  slash-key start [-e]")
+	fmt.Fprintln(w, "  slash-key start [-e [ipAddr]]")
 	fmt.Fprintln(w, "  slash-key stop")
 	fmt.Fprintln(w, "  slash-key status")
 	fmt.Fprintln(w, "  slash-key list")
@@ -452,17 +457,9 @@ func cmdStatus(paths appPaths, w io.Writer) error {
 }
 
 func cmdStart(paths appPaths, args []string) error {
-	external := false
-	if len(args) > 1 {
-		return fmt.Errorf("%w: slash-key start [-e]", errUsage)
-	}
-	if len(args) == 1 {
-		switch args[0] {
-		case "-e":
-			external = true
-		default:
-			return fmt.Errorf("%w: slash-key start [-e]", errUsage)
-		}
+	listenAddr, err := resolveStartListenAddr(args)
+	if err != nil {
+		return err
 	}
 
 	if err := ensureDataDirs(paths); err != nil {
@@ -470,7 +467,7 @@ func cmdStart(paths appPaths, args []string) error {
 	}
 	if _, ok := runningDaemon(paths); ok {
 		fmt.Println("slash-key server already running")
-		fmt.Println("http://localhost:4821")
+		fmt.Printf("local: http://localhost:%d\n", serverPort)
 		return nil
 	}
 
@@ -490,8 +487,8 @@ func cmdStart(paths appPaths, args []string) error {
 	cmd.Stdin = nil
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Env = append(os.Environ(), dataDirEnvKey+"="+paths.dataDir)
-	if external {
-		cmd.Env = append(cmd.Env, listenAddrEnvKey+"=0.0.0.0:4821")
+	if listenAddr != "" {
+		cmd.Env = append(cmd.Env, listenAddrEnvKey+"="+listenAddr)
 	}
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("%w: start daemon: %v", errRuntime, err)
@@ -505,7 +502,7 @@ func cmdStart(paths appPaths, args []string) error {
 		if state, ok := runningDaemon(paths); ok {
 			if err := pingDaemon(state); err == nil {
 				fmt.Println("slash-key server started")
-				fmt.Println("http://localhost:4821")
+				printStartupURLs(state.ListenAddr)
 				return nil
 			}
 		}
@@ -559,6 +556,10 @@ func cmdServe(paths appPaths) error {
 	if listenAddr == "" {
 		listenAddr = defaultListenAddr
 	}
+	listenAddr, err = validateServeListenAddr(listenAddr)
+	if err != nil {
+		return err
+	}
 	ln, err := net.Listen("tcp", listenAddr)
 	if err != nil {
 		return fmt.Errorf("%w: bind %s: %v", errRuntime, listenAddr, err)
@@ -568,6 +569,7 @@ func cmdServe(paths appPaths) error {
 	state := daemonState{
 		PID:         os.Getpid(),
 		Port:        serverPort,
+		ListenAddr:  listenAddr,
 		Status:      "running",
 		StartedAt:   time.Now().UTC(),
 		DataVersion: dataVersion,
@@ -640,6 +642,223 @@ func cmdServe(paths appPaths) error {
 	return nil
 }
 
+func printStartupURLs(listenAddr string) {
+	for _, line := range startupURLLines(listenAddr) {
+		fmt.Println(line)
+	}
+}
+
+func startupURLLines(listenAddr string) []string {
+	lines := []string{fmt.Sprintf("local: http://localhost:%d", serverPort)}
+	host, _, err := net.SplitHostPort(listenAddr)
+	if err != nil || host == "" || isLoopbackHost(host) {
+		return lines
+	}
+	lines = append(lines, fmt.Sprintf("network: http://%s:%d", host, serverPort))
+	return lines
+}
+
+func resolveStartListenAddr(args []string) (string, error) {
+	switch len(args) {
+	case 0:
+		return "", nil
+	case 1:
+		if args[0] != "-e" {
+			return "", fmt.Errorf("%w: slash-key start [-e [ipAddr]]", errUsage)
+		}
+		return autoDetectVPNListenAddr()
+	case 2:
+		if args[0] != "-e" {
+			return "", fmt.Errorf("%w: slash-key start [-e [ipAddr]]", errUsage)
+		}
+		return explicitListenAddr(args[1])
+	default:
+		return "", fmt.Errorf("%w: slash-key start [-e [ipAddr]]", errUsage)
+	}
+}
+
+func explicitListenAddr(host string) (string, error) {
+	ip := net.ParseIP(host)
+	if ip == nil {
+		return "", fmt.Errorf("%w: invalid ip address %q", errUsage, host)
+	}
+	return validateServeListenAddr(net.JoinHostPort(ip.String(), fmt.Sprintf("%d", serverPort)))
+}
+
+func autoDetectVPNListenAddr() (string, error) {
+	addrs, err := vpnInterfaceAddrs()
+	if err != nil {
+		return "", fmt.Errorf("%w: detect vpn address: %v", errRuntime, err)
+	}
+	for _, addr := range addrs {
+		if validated, err := validateServeListenAddr(net.JoinHostPort(addr.String(), fmt.Sprintf("%d", serverPort))); err == nil {
+			return validated, nil
+		}
+	}
+	return "", fmt.Errorf("%w: no safe vpn address found for -e", errUsage)
+}
+
+func validateServeListenAddr(listenAddr string) (string, error) {
+	host, port, err := net.SplitHostPort(listenAddr)
+	if err != nil {
+		return "", fmt.Errorf("%w: invalid listen addr %q", errUsage, listenAddr)
+	}
+	if port != fmt.Sprintf("%d", serverPort) {
+		return "", fmt.Errorf("%w: listen port must be %d", errUsage, serverPort)
+	}
+	if isWildcardHost(host) {
+		return "", fmt.Errorf("%w: wildcard listen addr is not allowed", errUsage)
+	}
+	if isLoopbackHost(host) {
+		return net.JoinHostPort(normalizeLoopbackHost(host), port), nil
+	}
+	ip := net.ParseIP(host)
+	if ip == nil {
+		return "", fmt.Errorf("%w: invalid listen host %q", errUsage, host)
+	}
+	if isLANIP(ip) {
+		return "", fmt.Errorf("%w: lan listen addr is not allowed", errUsage)
+	}
+	if ok, err := isVPNInterfaceAddr(ip); err != nil {
+		return "", fmt.Errorf("%w: inspect vpn interfaces: %v", errRuntime, err)
+	} else if !ok {
+		return "", fmt.Errorf("%w: listen addr must belong to a vpn interface", errUsage)
+	}
+	return net.JoinHostPort(ip.String(), port), nil
+}
+
+func isWildcardHost(host string) bool {
+	return host == "0.0.0.0" || host == "::" || host == ""
+}
+
+func isLoopbackHost(host string) bool {
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
+func normalizeLoopbackHost(host string) string {
+	if host == "localhost" {
+		return "127.0.0.1"
+	}
+	ip := net.ParseIP(host)
+	if ip != nil && ip.IsLoopback() && ip.To4() != nil {
+		return "127.0.0.1"
+	}
+	return host
+}
+
+func isLANIP(ip net.IP) bool {
+	ip4 := ip.To4()
+	if ip4 == nil {
+		return false
+	}
+	switch {
+	case ip4[0] == 10:
+		return true
+	case ip4[0] == 172 && ip4[1] >= 16 && ip4[1] <= 31:
+		return true
+	case ip4[0] == 192 && ip4[1] == 168:
+		return true
+	default:
+		return false
+	}
+}
+
+func isVPNInterfaceAddr(target net.IP) (bool, error) {
+	addrs, err := vpnInterfaceAddrs()
+	if err != nil {
+		return false, err
+	}
+	for _, addr := range addrs {
+		if addr.Equal(target) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func listVPNInterfaceAddrs() ([]net.IP, error) {
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		return nil, err
+	}
+	var addrs []net.IP
+	for _, iface := range ifaces {
+		if !isVPNInterfaceName(iface.Name) || iface.Flags&net.FlagUp == 0 {
+			continue
+		}
+		interfaceAddrs, err := iface.Addrs()
+		if err != nil {
+			return nil, err
+		}
+		for _, addr := range interfaceAddrs {
+			ipNet, ok := addr.(*net.IPNet)
+			if !ok {
+				continue
+			}
+			ip := ipNet.IP
+			if ip == nil || ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || isLANIP(ip) {
+				continue
+			}
+			addrs = append(addrs, ip)
+		}
+	}
+	return addrs, nil
+}
+
+func isVPNInterfaceName(name string) bool {
+	for _, prefix := range vpnInterfacePrefixes {
+		if strings.HasPrefix(name, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+func machineIPv4() (string, error) {
+	addrs, err := vpnInterfaceAddrs()
+	if err != nil {
+		return "", err
+	}
+	for _, ip := range addrs {
+		ip4 := ip.To4()
+		if ip4 == nil {
+			continue
+		}
+		return ip4.String(), nil
+	}
+
+	interfaceAddrs, err := net.InterfaceAddrs()
+	if err != nil {
+		return "", err
+	}
+	for _, addr := range interfaceAddrs {
+		ipNet, ok := addr.(*net.IPNet)
+		if !ok {
+			continue
+		}
+		ip := ipNet.IP.To4()
+		if ip == nil || ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || isLANIP(ip) {
+			continue
+		}
+		if ip.IsGlobalUnicast() {
+			return ip.String(), nil
+		}
+	}
+	return "", errors.New("no suitable network address found")
+}
+
+func machineIPv4OrEmpty() string {
+	ip, err := machineIPv4()
+	if err != nil {
+		return ""
+	}
+	return ip
+}
+
 func runningDaemon(paths appPaths) (daemonState, bool) {
 	state, err := loadDaemonState(paths)
 	if err != nil {
@@ -664,9 +883,19 @@ func loadDaemonState(paths appPaths) (daemonState, error) {
 	return state, nil
 }
 
+func daemonBaseURL(state daemonState) string {
+	host := "127.0.0.1"
+	if state.ListenAddr != "" {
+		if listenHost, _, err := net.SplitHostPort(state.ListenAddr); err == nil && listenHost != "" {
+			host = normalizeLoopbackHost(listenHost)
+		}
+	}
+	return fmt.Sprintf("http://%s:%d", host, state.Port)
+}
+
 func pingDaemon(state daemonState) error {
 	client := &http.Client{Timeout: 500 * time.Millisecond}
-	resp, err := client.Get(fmt.Sprintf("http://127.0.0.1:%d/health", state.Port))
+	resp, err := client.Get(daemonBaseURL(state) + "/health")
 	if err != nil {
 		return err
 	}
@@ -679,7 +908,7 @@ func pingDaemon(state daemonState) error {
 
 func daemonReload(state daemonState) error {
 	client := &http.Client{Timeout: 2 * time.Second}
-	req, err := http.NewRequest(http.MethodPost, fmt.Sprintf("http://127.0.0.1:%d/reload", state.Port), nil)
+	req, err := http.NewRequest(http.MethodPost, daemonBaseURL(state)+"/reload", nil)
 	if err != nil {
 		return err
 	}
@@ -696,7 +925,7 @@ func daemonReload(state daemonState) error {
 
 func daemonShutdown(state daemonState) error {
 	client := &http.Client{Timeout: 2 * time.Second}
-	req, err := http.NewRequest(http.MethodPost, fmt.Sprintf("http://127.0.0.1:%d/shutdown", state.Port), nil)
+	req, err := http.NewRequest(http.MethodPost, daemonBaseURL(state)+"/shutdown", nil)
 	if err != nil {
 		return err
 	}
@@ -713,7 +942,7 @@ func daemonShutdown(state daemonState) error {
 
 func daemonSearch(state daemonState, query string) ([]string, error) {
 	client := &http.Client{Timeout: 2 * time.Second}
-	endpoint := fmt.Sprintf("http://127.0.0.1:%d/path", state.Port)
+	endpoint := daemonBaseURL(state) + "/path"
 	if query != "" {
 		endpoint += "?q=" + url.QueryEscape(query)
 	}
@@ -734,7 +963,7 @@ func daemonSearch(state daemonState, query string) ([]string, error) {
 
 func daemonList(state daemonState) ([]string, error) {
 	client := &http.Client{Timeout: 2 * time.Second}
-	resp, err := client.Get(fmt.Sprintf("http://127.0.0.1:%d/list", state.Port))
+	resp, err := client.Get(daemonBaseURL(state) + "/list")
 	if err != nil {
 		return nil, err
 	}
