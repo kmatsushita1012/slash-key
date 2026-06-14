@@ -7,6 +7,7 @@
 ### Homebrew tap
 
 ```bash
+brew trust kmatsushita1012/tap
 brew tap kmatsushita1012/tap
 brew install slash-key
 ```
