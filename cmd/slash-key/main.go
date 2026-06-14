@@ -434,8 +434,14 @@ func cmdStatus(paths appPaths, w io.Writer) error {
 			if projectErr != nil {
 				projects = nil
 			}
+			statusState := daemonState{Port: serverPort}
+			if loaded, loadErr := loadDaemonState(paths); loadErr == nil {
+				statusState = loaded
+			}
 			fmt.Fprintln(w, "running")
-			fmt.Fprintf(w, "http://localhost:%d\n", serverPort)
+			for _, line := range startupURLLines(statusState.ListenAddr) {
+				fmt.Fprintln(w, line)
+			}
 			fmt.Fprintf(w, "projects: %d\n", len(projects))
 			return nil
 		}
@@ -451,7 +457,9 @@ func cmdStatus(paths appPaths, w io.Writer) error {
 		return err
 	}
 	fmt.Fprintln(w, "running")
-	fmt.Fprintf(w, "http://localhost:%d\n", state.Port)
+	for _, line := range startupURLLines(state.ListenAddr) {
+		fmt.Fprintln(w, line)
+	}
 	fmt.Fprintf(w, "projects: %d\n", len(registry.Projects))
 	return nil
 }
@@ -512,26 +520,28 @@ func cmdStart(paths appPaths, args []string) error {
 }
 
 func cmdStop(paths appPaths) error {
-	state, ok := runningDaemon(paths)
-	if !ok {
+	state, err := loadDaemonState(paths)
+	if err != nil {
 		if err := daemonShutdown(daemonState{Port: serverPort}); err == nil {
 			fmt.Println("slash-key server stopped")
 			return nil
 		}
 		return errDaemonNotRunning
 	}
-	if err := daemonShutdown(state); err != nil && state.PID > 0 {
+	_ = daemonShutdown(state)
+	if state.PID > 0 {
 		process, findErr := os.FindProcess(state.PID)
 		if findErr != nil {
 			return fmt.Errorf("%w: find process: %v", errRuntime, findErr)
 		}
-		if signalErr := process.Signal(syscall.SIGTERM); signalErr != nil {
-			return fmt.Errorf("%w: stop daemon: %v", errRuntime, err)
+		if signalErr := process.Signal(syscall.SIGTERM); signalErr != nil && !errors.Is(signalErr, os.ErrProcessDone) {
+			return fmt.Errorf("%w: stop daemon: %v", errRuntime, signalErr)
 		}
 	}
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
-		if _, ok := runningDaemon(paths); !ok && pingDaemon(daemonState{Port: serverPort}) != nil {
+		if !processAlive(state.PID) {
+			_ = os.Remove(paths.daemonState)
 			fmt.Println("slash-key server stopped")
 			return nil
 		}
@@ -540,6 +550,14 @@ func cmdStop(paths appPaths) error {
 	_ = os.Remove(paths.daemonState)
 	fmt.Println("slash-key server stopped")
 	return nil
+}
+
+func processAlive(pid int) bool {
+	if pid <= 0 {
+		return false
+	}
+	err := syscall.Kill(pid, 0)
+	return err == nil || errors.Is(err, syscall.EPERM)
 }
 
 func cmdServe(paths appPaths) error {
