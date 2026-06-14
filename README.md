@@ -1,6 +1,6 @@
 # slash-key
 
-`slash-key` is a local CLI and daemon for fast `/`-style path completion across registered project directories.
+`slash-key` は、登録済みプロジェクトディレクトリに対して `/` 風のパス補完を高速に行うローカル CLI と daemon です。
 
 ## Install
 
@@ -9,26 +9,6 @@
 ```bash
 brew tap kmatsushita1012/tap
 brew install slash-key
-```
-
-## Run Locally
-
-```bash
-slash-key start
-```
-
-## Build
-
-ローカルでコンパイルするには、リポジトリ直下で次を実行します。
-
-```bash
-go build -o slash-key ./cmd/slash-key
-```
-
-テストも含めて確認するなら、こちらです。
-
-```bash
-go test ./...
 ```
 
 ## Run Over VPN
@@ -44,7 +24,7 @@ slash-key start -e
 slash-key start -e 100.x.x.x
 ```
 
-- Output example:
+- 出力例:
 
 ```text
 slash-key server started
@@ -53,11 +33,31 @@ network: http://100.x.x.x:4821
 ```
 
 - `0.0.0.0` / `::` や LAN IP (`192.168.x.x`, `10.x.x.x`, `172.16-31.x.x`) への bind は拒否されます
-- Then access the daemon from `http://<vpn-ip>:4821`
-- The host firewall and VPN policy must allow inbound TCP `4821`
+- `http://<vpn-ip>:4821` から daemon にアクセスします
+- host firewall と VPN policy で TCP `4821` の inbound を許可してください
 - `SLASH_KEY_LISTEN_ADDR=...` も loopback または VPN interface 上の実アドレスだけ許可されます
 
-## Notes
+## ローカル起動
 
-- The initial Homebrew distribution is provided through the tap repo.
-- The long-term goal is to make the formula available without a tap by upstreaming it to Homebrew core.
+```bash
+slash-key start
+```
+
+## ビルド
+
+ローカルでコンパイルするには、リポジトリ直下で次を実行します。
+
+```bash
+go build -o slash-key ./cmd/slash-key
+```
+
+テストも含めて確認するなら、こちらです。
+
+```bash
+go test ./...
+```
+
+## 補足
+
+- 初期配布は Homebrew タップ経由で提供しています。
+- 将来的には tap を使わず、Homebrew core に upstream する形を目指しています。
