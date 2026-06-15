@@ -129,3 +129,13 @@ slash-key path p=slash-key q=src
 - `slash-key start -e` は VPN interface 上の安全なアドレスのみを自動選択して bind します
 - `0.0.0.0` / `::` や LAN IP への bind は拒否されます
 - `SLASH_KEY_LISTEN_ADDR` も loopback または VPN interface 上の実アドレスだけ許可されます
+
+## Build
+
+Go でローカルビルドする場合は、リポジトリ直下で次を実行してください。
+
+```bash
+go build -o slash-key ./cmd/slash-key
+```
+
+`go.mod` の指定 Go バージョンは `1.26.0` です。
