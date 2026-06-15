@@ -94,30 +94,34 @@ slash-key stop
 curl http://localhost:4821/list
 ```
 
-### GET /path?q=<query>
+```json
+["MaTool", "slash-key"]
+```
 
-`query` に一致する path を返します。空 query なら全 path を返します。
+### GET /path?p=<project>&q=<path>
+
+`project` に一致する登録済み project の path を返します。`project` は登録 root path の末尾名です。`q` を省略した場合はその project の全 path を返します。同名 project が複数ある場合は、後から登録された project を使います。
 
 ```bash
-curl "http://localhost:4821/path?q=src"
+curl "http://localhost:4821/path?p=slash-key&q=src"
 ```
 
 ## Shell API
 
 ### slash-key list
 
-登録済み project の root path を出力します。
+登録済み project の末尾名を出力します。
 
 ```bash
 slash-key list
 ```
 
-### slash-key path [query]
+### slash-key path p=<project> [q=<path>]
 
-index 化された path を検索します。
+指定 project の index 化された path を検索します。
 
 ```bash
-slash-key path src
+slash-key path p=slash-key q=src
 ```
 
 ## Notes

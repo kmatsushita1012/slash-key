@@ -36,7 +36,7 @@
 
 ## 2. Goals
 
-- `slash-key path <query>` と `GET /path?q=...` が低レイテンシで応答できる
+- `slash-key path p=<project> [q=<path>]` と `GET /path?p=...&q=...` が低レイテンシで応答できる
 - daemon 起動中に `add` / `delete` / `add --codex` を実行した場合、検索結果へ即時反映される
 - 失敗理由が CLI と API の両方で明確に分かる
 - 初期実装は単純さを優先し、後から fuzzy search や incremental indexing を足せる構成にする
@@ -189,7 +189,7 @@ DaemonState
 - `slash-key add <dirPath>`
 - `slash-key add --codex`
 - `slash-key delete <dirPath>`
-- `slash-key path [query]`
+- `slash-key path p=<project> [q=<path>]`
 
 ### CLI 共通ルール
 
@@ -225,7 +225,7 @@ DaemonState
 
 #### `list`
 
-- registry にある project の absolute path を登録順で出力する
+- registry にある project の `displayName` を登録順で出力する
 
 #### `add <dirPath>`
 
@@ -252,11 +252,14 @@ DaemonState
 - 対応 index file を削除
 - daemon 起動中なら reload 実行
 
-#### `path [query]`
+#### `path p=<project> [q=<path>]`
 
 - daemon 起動中なら HTTP API を優先利用
 - daemon 未起動時は local index file を直接読んで検索してもよい
   - ただし実装を単純にするなら v0.2 では daemon 必須に寄せてもよい
+- `p` は `displayName` を使う
+- `q` 省略時は対象 project の全 path を返す
+- 同名 project は登録順で後勝ちとする
 - 出力は relative path のみ
 
 ## 7. Daemon Design
@@ -406,12 +409,14 @@ stopped
 
 ### `GET /list`
 
+- 登録済み project の `displayName` 配列を返す
+
 response:
 
 ```json
 [
-  "/Users/foo/workspace/app",
-  "/Users/foo/dev/tools"
+  "app",
+  "tools"
 ]
 ```
 
@@ -419,7 +424,12 @@ response:
 
 query params:
 
+- `p`: required
 - `q`: optional
+
+- `p` は project root の末尾名 `displayName` を指定する
+- `q` 省略時は対象 project の全 path を返す
+- 同名 project が複数ある場合は後から登録された project を解決対象にする
 
 response:
 
@@ -529,7 +539,8 @@ response:
 
 - localhost bind のみ
 - 外部ネットワーク公開をしない
-- project root の absolute path は `/list` のみで返し、`/path` は relative path に限定する
+- `/list` は project 名のみを返し、absolute path は API から返さない
+- `/path` は relative path に限定する
 - path traversal 文字列を受け取っても filesystem を直接読む API は提供しない
 
 ## 15. Testing Strategy

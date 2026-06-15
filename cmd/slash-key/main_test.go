@@ -4,7 +4,9 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
+	"time"
 )
 
 func TestMatchEntryRanking(t *testing.T) {
@@ -43,6 +45,127 @@ func TestSearchIndexesSortOrder(t *testing.T) {
 	}
 	if results[0] != "./fuga" {
 		t.Fatalf("expected shortest exact/prefix match first, got %s", results[0])
+	}
+}
+
+func TestProjectNames(t *testing.T) {
+	projects := []project{
+		{DisplayName: "MaTool"},
+		{DisplayName: "slash-key"},
+	}
+
+	got := projectNames(projects)
+	want := []string{"MaTool", "slash-key"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("projectNames() = %#v, want %#v", got, want)
+	}
+}
+
+func TestResolveProjectIndexUsesLastRegisteredDuplicate(t *testing.T) {
+	projects := []project{
+		{ID: "proj_old", DisplayName: "dup"},
+		{ID: "proj_other", DisplayName: "other"},
+		{ID: "proj_new", DisplayName: "dup"},
+	}
+	indexes := []indexFile{
+		{ProjectID: "proj_old", Entries: []pathEntry{{RelativePath: "./old"}}},
+		{ProjectID: "proj_other", Entries: []pathEntry{{RelativePath: "./other"}}},
+		{ProjectID: "proj_new", Entries: []pathEntry{{RelativePath: "./new"}}},
+	}
+
+	got, err := resolveProjectIndex(projects, indexes, "dup")
+	if err != nil {
+		t.Fatalf("resolveProjectIndex error: %v", err)
+	}
+	if got.ProjectID != "proj_new" {
+		t.Fatalf("resolveProjectIndex selected %q, want proj_new", got.ProjectID)
+	}
+}
+
+func TestResolveProjectIndexNotFound(t *testing.T) {
+	_, err := resolveProjectIndex(nil, nil, "missing")
+	if err == nil {
+		t.Fatal("expected error for missing project")
+	}
+	if err.Error() == "" {
+		t.Fatal("expected non-empty error")
+	}
+}
+
+func TestParsePathArgs(t *testing.T) {
+	projectName, query, err := parsePathArgs([]string{"p=slash-key", "q=src"})
+	if err != nil {
+		t.Fatalf("parsePathArgs error: %v", err)
+	}
+	if projectName != "slash-key" || query != "src" {
+		t.Fatalf("parsePathArgs() = (%q, %q), want (%q, %q)", projectName, query, "slash-key", "src")
+	}
+
+	projectName, query, err = parsePathArgs([]string{"q=src", "p=slash-key"})
+	if err != nil {
+		t.Fatalf("parsePathArgs with reversed order error: %v", err)
+	}
+	if projectName != "slash-key" || query != "src" {
+		t.Fatalf("parsePathArgs reversed order = (%q, %q), want (%q, %q)", projectName, query, "slash-key", "src")
+	}
+}
+
+func TestParsePathArgsRequiresProject(t *testing.T) {
+	cases := [][]string{
+		nil,
+		{"q=src"},
+		{"src"},
+		{"project=slash-key"},
+	}
+
+	for _, args := range cases {
+		if _, _, err := parsePathArgs(args); err == nil {
+			t.Fatalf("parsePathArgs(%#v) expected error", args)
+		}
+	}
+}
+
+func TestLocalSearchFiltersByProjectName(t *testing.T) {
+	dataDir := t.TempDir()
+	paths := appPaths{
+		dataDir:     dataDir,
+		registry:    filepath.Join(dataDir, "registry.json"),
+		daemonState: filepath.Join(dataDir, "daemon.json"),
+		indexDir:    filepath.Join(dataDir, "indexes"),
+		logDir:      filepath.Join(dataDir, "logs"),
+		logFile:     filepath.Join(dataDir, "logs", "daemon.log"),
+	}
+	if err := ensureDataDirs(paths); err != nil {
+		t.Fatalf("ensureDataDirs error: %v", err)
+	}
+
+	registry := registryFile{
+		Projects: []project{
+			{ID: "proj_old", RootPath: "/tmp/old", DisplayName: "dup", CreatedAt: time.Now().UTC()},
+			{ID: "proj_other", RootPath: "/tmp/other", DisplayName: "other", CreatedAt: time.Now().UTC()},
+			{ID: "proj_new", RootPath: "/tmp/new", DisplayName: "dup", CreatedAt: time.Now().UTC()},
+		},
+	}
+	if err := saveRegistry(paths, registry); err != nil {
+		t.Fatalf("saveRegistry error: %v", err)
+	}
+	for _, index := range []indexFile{
+		{ProjectID: "proj_old", RootPath: "/tmp/old", Entries: []pathEntry{{ProjectID: "proj_old", RelativePath: "./old-result", Basename: "old-result", Segments: []string{"old-result"}}}},
+		{ProjectID: "proj_other", RootPath: "/tmp/other", Entries: []pathEntry{{ProjectID: "proj_other", RelativePath: "./other-result", Basename: "other-result", Segments: []string{"other-result"}}}},
+		{ProjectID: "proj_new", RootPath: "/tmp/new", Entries: []pathEntry{{ProjectID: "proj_new", RelativePath: "./new-result", Basename: "new-result", Segments: []string{"new-result"}}}},
+	} {
+		if err := writeJSON(indexPath(paths, index.ProjectID), index); err != nil {
+			t.Fatalf("writeJSON index error: %v", err)
+		}
+	}
+
+	results, err := localSearch(paths, "dup", "")
+	if err != nil {
+		t.Fatalf("localSearch error: %v", err)
+	}
+	want := []string{"./new-result"}
+	if !reflect.DeepEqual(results, want) {
+		t.Fatalf("localSearch() = %#v, want %#v", results, want)
 	}
 }
 

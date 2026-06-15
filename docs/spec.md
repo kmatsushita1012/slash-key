@@ -145,8 +145,8 @@ projects: 12
 
 #### 出力
 
-- 1 行につき 1 project root path
-- absolute path を表示する
+- 1 行につき 1 project 名
+- `basename(rootPath)` を表示する
 
 ### 6.5 `slash-key add <dirPath>`
 
@@ -180,14 +180,17 @@ Codex 管理下 project を自動検出して追加する。
 - 対応する index file を削除する
 - daemon 起動中なら reload する
 
-### 6.8 `slash-key path [query]`
+### 6.8 `slash-key path p=<project> [q=<path>]`
 
-index 化された path を検索する。
+指定 project の index 化された path を検索する。
 
 #### 入力
 
-- `query` は省略可能
-- `slash-key path` と `slash-key path ""` は空 query として扱う
+- `p` は必須
+- `q` は省略可能
+- project 名には `basename(rootPath)` を使う
+- `q` 省略時は対象 project の全 path を返す
+- 同名 project が複数ある場合は後から登録された project を優先する
 
 #### 出力
 
@@ -278,14 +281,14 @@ http://localhost:4821
 
 ### 9.3 `GET /list`
 
-登録済み project root の一覧を返す。
+登録済み project 名の一覧を返す。
 
 #### response
 
 ```json
 [
-  "/Users/foo/workspace/app",
-  "/Users/foo/dev/tools"
+  "app",
+  "tools"
 ]
 ```
 
@@ -295,10 +298,12 @@ path 検索を行う。
 
 #### query parameter
 
+- `p`
+  - required
+  - `basename(rootPath)` を指定する
+  - 同名 project が複数ある場合は後から登録された project を使う
 - `q`
   - primary parameter
-- `query`
-  - backward-compatible parameter
 
 #### response
 
@@ -313,9 +318,8 @@ path 検索を行う。
 #### 空 query
 
 ```http
-GET /path
-GET /path?q=
-GET /path?query=
+GET /path?p=app
+GET /path?p=app&q=
 ```
 
 ### 9.5 内部 API

@@ -181,7 +181,7 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  slash-key add <dirPath>")
 	fmt.Fprintln(w, "  slash-key add --codex")
 	fmt.Fprintln(w, "  slash-key delete <dirPath>")
-	fmt.Fprintln(w, "  slash-key path [query]")
+	fmt.Fprintln(w, "  slash-key path p=<project> [q=<path>]")
 }
 
 func resolvePaths() (appPaths, error) {
@@ -393,22 +393,19 @@ func cmdList(paths appPaths, w io.Writer) error {
 	if err != nil {
 		return err
 	}
-	for _, item := range registry.Projects {
-		fmt.Fprintln(w, item.RootPath)
+	for _, name := range projectNames(registry.Projects) {
+		fmt.Fprintln(w, name)
 	}
 	return nil
 }
 
 func cmdPath(paths appPaths, args []string, w io.Writer) error {
-	query := ""
-	if len(args) > 1 {
-		return fmt.Errorf("%w: slash-key path [query]", errUsage)
-	}
-	if len(args) == 1 {
-		query = args[0]
+	projectName, query, err := parsePathArgs(args)
+	if err != nil {
+		return err
 	}
 	if daemon, ok := runningDaemon(paths); ok {
-		results, err := daemonSearch(daemon, query)
+		results, err := daemonSearch(daemon, projectName, query)
 		if err == nil {
 			for _, result := range results {
 				fmt.Fprintln(w, result)
@@ -416,7 +413,7 @@ func cmdPath(paths appPaths, args []string, w io.Writer) error {
 			return nil
 		}
 	}
-	results, err := localSearch(paths, query)
+	results, err := localSearch(paths, projectName, query)
 	if err != nil {
 		return err
 	}
@@ -629,18 +626,21 @@ func cmdServe(paths appPaths) error {
 		}()
 	})
 	mux.HandleFunc("/list", func(w http.ResponseWriter, _ *http.Request) {
-		paths := make([]string, 0, len(runtime.registry))
-		for _, item := range runtime.registry {
-			paths = append(paths, item.RootPath)
-		}
-		writeJSONResponse(w, http.StatusOK, paths)
+		writeJSONResponse(w, http.StatusOK, projectNames(runtime.registry))
 	})
 	mux.HandleFunc("/path", func(w http.ResponseWriter, r *http.Request) {
-		query := r.URL.Query().Get("q")
-		if query == "" {
-			query = r.URL.Query().Get("query")
+		projectName := r.URL.Query().Get("p")
+		if projectName == "" {
+			writeJSONError(w, http.StatusBadRequest, "PROJECT_REQUIRED", "p is required")
+			return
 		}
-		results := searchIndexes(runtime.indexes, query)
+		query := r.URL.Query().Get("q")
+		index, err := resolveProjectIndex(runtime.registry, runtime.indexes, projectName)
+		if err != nil {
+			writeJSONError(w, http.StatusNotFound, "PROJECT_NOT_FOUND", err.Error())
+			return
+		}
+		results := searchIndexes([]indexFile{index}, query)
 		writeJSONResponse(w, http.StatusOK, results)
 	})
 
@@ -958,17 +958,23 @@ func daemonShutdown(state daemonState) error {
 	return nil
 }
 
-func daemonSearch(state daemonState, query string) ([]string, error) {
+func daemonSearch(state daemonState, projectName, query string) ([]string, error) {
 	client := &http.Client{Timeout: 2 * time.Second}
-	endpoint := daemonBaseURL(state) + "/path"
+	endpoint := daemonBaseURL(state) + "/path?p=" + url.QueryEscape(projectName)
 	if query != "" {
-		endpoint += "?q=" + url.QueryEscape(query)
+		endpoint += "&q=" + url.QueryEscape(query)
 	}
 	resp, err := client.Get(endpoint)
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, errProjectNotFound
+	}
+	if resp.StatusCode == http.StatusBadRequest {
+		return nil, errUsage
+	}
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("search status %d", resp.StatusCode)
 	}
@@ -1035,12 +1041,16 @@ func loadIndex(paths appPaths, projectID string) (indexFile, error) {
 	return index, nil
 }
 
-func localSearch(paths appPaths, query string) ([]string, error) {
-	_, indexes, err := loadRuntime(paths)
+func localSearch(paths appPaths, projectName, query string) ([]string, error) {
+	registry, indexes, err := loadRuntime(paths)
 	if err != nil {
 		return nil, err
 	}
-	return searchIndexes(indexes, query), nil
+	index, err := resolveProjectIndex(registry.Projects, indexes, projectName)
+	if err != nil {
+		return nil, err
+	}
+	return searchIndexes([]indexFile{index}, query), nil
 }
 
 type scoredResult struct {
@@ -1084,6 +1094,52 @@ func searchIndexes(indexes []indexFile, query string) []string {
 		results = append(results, item.path)
 	}
 	return results
+}
+
+func projectNames(projects []project) []string {
+	names := make([]string, 0, len(projects))
+	for _, item := range projects {
+		names = append(names, item.DisplayName)
+	}
+	return names
+}
+
+func resolveProjectIndex(projects []project, indexes []indexFile, name string) (indexFile, error) {
+	for i := len(projects) - 1; i >= 0; i-- {
+		if projects[i].DisplayName != name {
+			continue
+		}
+		for _, index := range indexes {
+			if index.ProjectID == projects[i].ID {
+				return index, nil
+			}
+		}
+		break
+	}
+	return indexFile{}, fmt.Errorf("%w: %s", errProjectNotFound, name)
+}
+
+func parsePathArgs(args []string) (string, string, error) {
+	projectName := ""
+	query := ""
+	for _, arg := range args {
+		key, value, ok := strings.Cut(arg, "=")
+		if !ok {
+			return "", "", fmt.Errorf("%w: slash-key path p=<project> [q=<path>]", errUsage)
+		}
+		switch key {
+		case "p":
+			projectName = value
+		case "q":
+			query = value
+		default:
+			return "", "", fmt.Errorf("%w: slash-key path p=<project> [q=<path>]", errUsage)
+		}
+	}
+	if projectName == "" {
+		return "", "", fmt.Errorf("%w: slash-key path p=<project> [q=<path>]", errUsage)
+	}
+	return projectName, query, nil
 }
 
 func matchEntry(entry pathEntry, query string) (int, bool) {
