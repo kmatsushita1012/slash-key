@@ -3,7 +3,7 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF' >&2
-usage: scripts/publish_release_and_update_brew.sh <version-without-leading-v>
+usage: scripts/update.sh <version-without-leading-v>
 
 Required environment:
   HOMEBREW_TAP_PATH   Absolute path to the homebrew-tap repository

@@ -148,7 +148,7 @@ go build -o slash-key ./cmd/slash-key
 2. リポジトリのルートで次を実行します
 
 ```bash
-scripts/publish_release_and_update_brew.sh 1.0.0
+scripts/update.sh 1.0.0
 ```
 
 - `HOMEBREW_TAP_PATH` は `homebrew-tap` リポジトリのローカル絶対パスです
