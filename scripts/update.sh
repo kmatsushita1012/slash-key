@@ -55,6 +55,8 @@ if [[ ! -d "$HOMEBREW_TAP_PATH/.git" ]]; then
   exit 1
 fi
 
+git -C "$HOMEBREW_TAP_PATH" pull --rebase --autostash origin main
+
 if ! git -C "$repo_root" diff --quiet || ! git -C "$repo_root" diff --cached --quiet; then
   echo "Working tree is dirty. Commit or stash changes before tagging." >&2
   exit 1
