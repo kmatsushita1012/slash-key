@@ -70,6 +70,13 @@ fi
 
 git -C "$repo_root" push "$git_remote" "$tag"
 
+repo_slug="$(gh repo view --json nameWithOwner --jq .nameWithOwner)"
+if gh release view "$tag" --repo "$repo_slug" >/dev/null 2>&1; then
+  echo "Release already exists: $tag"
+else
+  gh release create "$tag" --repo "$repo_slug" --title "$tag" --generate-notes --verify-tag
+fi
+
 tap_formula="${HOMEBREW_TAP_PATH}/Formula/slash-key.rb"
 tap_commit_message="Update slash-key to ${tag}"
 
