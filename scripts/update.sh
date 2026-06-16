@@ -69,7 +69,6 @@ fi
 git -C "$repo_root" push "$git_remote" "$tag"
 
 tap_formula="${HOMEBREW_TAP_PATH}/Formula/slash-key.rb"
-tap_update_script="${HOMEBREW_TAP_PATH}/scripts/update_formula.sh"
 tap_commit_message="Update slash-key to ${tag}"
 
 if [[ ! -f "$tap_formula" ]]; then
@@ -77,13 +76,10 @@ if [[ ! -f "$tap_formula" ]]; then
   exit 1
 fi
 
-if [[ -x "$tap_update_script" ]]; then
-  "$tap_update_script" "$version"
-else
-  url="https://github.com/kmatsushita1012/slash-key/archive/refs/tags/${tag}.tar.gz"
-  sha256="$(curl -L --fail --silent --show-error "$url" | shasum -a 256 | awk '{print $1}')"
+url="https://github.com/kmatsushita1012/slash-key/archive/refs/tags/${tag}.tar.gz"
+sha256="$(curl -L --fail --silent --show-error "$url" | shasum -a 256 | awk '{print $1}')"
 
-  python3 - "$tap_formula" "$url" "$sha256" <<'PY'
+python3 - "$tap_formula" "$url" "$sha256" <<'PY'
 from pathlib import Path
 import re
 import sys
@@ -109,7 +105,6 @@ if count_url != 1 or count_sha != 1:
 
 formula_path.write_text(text)
 PY
-fi
 
 git -C "$HOMEBREW_TAP_PATH" add Formula/slash-key.rb
 
