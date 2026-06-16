@@ -139,3 +139,18 @@ go build -o slash-key ./cmd/slash-key
 ```
 
 `go.mod` の指定 Go バージョンは `1.26.0` です。
+
+## Release / Homebrew Update
+
+このリポジトリから直接、Git tag の作成と Homebrew tap の更新をまとめて行えます。
+
+1. `.env.example` を `.env` にコピーして `HOMEBREW_TAP_PATH` を設定します
+2. リポジトリのルートで次を実行します
+
+```bash
+scripts/publish_release_and_update_brew.sh 1.0.0
+```
+
+- `HOMEBREW_TAP_PATH` は `homebrew-tap` リポジトリのローカル絶対パスです
+- スクリプトは `v1.0.0` タグを作成して push し、tap 側の `Formula/slash-key.rb` を更新して commit/push します
+- すでに tag が存在する場合は、その tag の作成はスキップします
